@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +8,6 @@ import 'package:provider/provider.dart';
 import 'package:smart_liveliness_detection/smart_liveliness_detection.dart';
 import 'package:smart_liveliness_detection/src/widgets/instruction_overlay.dart';
 import 'package:smart_liveliness_detection/src/widgets/liveness_progress_bar.dart';
-import 'package:smart_liveliness_detection/src/widgets/oval_progress.dart';
 import 'package:smart_liveliness_detection/src/widgets/status_indicator.dart';
 import 'package:smart_liveliness_detection/src/widgets/success_overlay.dart';
 import 'package:smart_liveliness_detection/src/widgets/challenge_hint_widget.dart';
@@ -16,95 +16,54 @@ import 'package:smart_liveliness_detection/src/widgets/challenge_hint_widget.dar
 typedef ChallengeCompletedCallback = void Function(ChallengeType challengeType);
 
 /// Callback type for when liveness verification is completed
-typedef LivenessCompletedCallback = void Function(String sessionId, bool isSuccessful, Map<String, dynamic> data);
+typedef LivenessCompletedCallback = void Function(
+    String sessionId, bool isSuccessful, Map<String, dynamic> data);
 
 /// Callback type for when final image is captured with metadata
-typedef FinalImageCapturedCallback = void Function(String sessionId, XFile imageFile, Map<String, dynamic> metadata);
+typedef FinalImageCapturedCallback = void Function(
+    String sessionId, XFile imageFile, Map<String, dynamic> metadata);
 
 /// Callback type for when face is detected
-typedef FaceDetectedCallback = void Function(ChallengeType challengeType, bool firstChallengePassed, CameraImage image, List<Face> faces, CameraDescription camera);
+typedef FaceDetectedCallback = void Function(
+    ChallengeType challengeType,
+    bool firstChallengePassed,
+    CameraImage image,
+    List<Face> faces,
+    CameraDescription camera);
 
-/// Callback type for when face is NOT detected (It will trigger the first face non-detection event after any face detection)
-typedef FaceNotDetectedCallback = void Function(ChallengeType challengeType, LivenessController controller);
+/// Callback type for when face is NOT detected
+typedef FaceNotDetectedCallback = void Function(
+    ChallengeType challengeType, LivenessController controller);
 
 /// Callback type for face quality scoring results
 typedef FaceQualityCallback = void Function(FaceQualityResult result);
 
+// ---------------------------------------------------------------------------
+// Main screen widget
+// ---------------------------------------------------------------------------
+
 /// Main widget for liveness detection
 class LivenessDetectionScreen extends StatefulWidget {
-  /// Available cameras
   final List<CameraDescription> cameras;
-
-  /// Configuration
   final LivenessConfig? config;
-
-  /// Theme
   final LivenessTheme? theme;
-
-  /// Callback for when a challenge is completed
   final ChallengeCompletedCallback? onChallengeCompleted;
-
-  /// Callback for when liveness verification is completed
   final LivenessCompletedCallback? onLivenessCompleted;
-
-  /// Callback for when face is detected
   final FaceDetectedCallback? onFaceDetected;
-
-  /// Callback for when face is NOT detected
   final FaceNotDetectedCallback? onFaceNotDetected;
-
-  /// Callback fired each time a face quality score is computed.
   final FaceQualityCallback? onFaceQualityCheck;
-
-  /// Callback fired when a biometric template is generated at session completion.
   final BiometricTemplateCallback? onBiometricTemplateGenerated;
-
-  /// Whether to show app bar
   final bool showAppBar;
-
-  /// Custom app bar
   final PreferredSizeWidget? customAppBar;
-
-  /// Custom success overlay
   final Widget? customSuccessOverlay;
-
-  /// Whether to show status indicators
   final bool showStatusIndicators;
-
-  /// Whether to show the capture image button
   final bool showCaptureImageButton;
-
-  /// Callback when manual image is captured
   final Function(String sessionId, XFile imageFile)? onManualImageCaptured;
-
-  /// Text for the capture button
   final String? captureButtonText;
-
-  /// Whether to use color progress for oval
   final bool useColorProgress;
-
-  /// Whether to capture a single image at the end of verification
   final bool captureFinalImage;
-
-  /// Callback for when final image is captured with metadata
   final FinalImageCapturedCallback? onFinalImageCaptured;
 
-  /// Optional futuristic painter style for the progress bar.
-  ///
-  /// When set, the bottom progress area is replaced by an animated
-  /// [FuturisticLivenessBar] using the chosen [LivenessUiStyle].
-  /// When `null` the default progress indicator is used.
-  final LivenessUiStyle? painterStyle;
-
-  /// When `true` a floating button lets the user switch [painterStyle] at
-  /// runtime via [LivenessStylePicker]. Has no effect when [painterStyle]
-  /// is `null`.
-  final bool allowStyleChange;
-
-  /// Height of the futuristic bar in logical pixels (default 64).
-  final double futuristicBarHeight;
-
-  /// Constructor
   const LivenessDetectionScreen({
     super.key,
     required this.cameras,
@@ -126,20 +85,17 @@ class LivenessDetectionScreen extends StatefulWidget {
     this.onFaceNotDetected,
     this.onFaceQualityCheck,
     this.onBiometricTemplateGenerated,
-    this.painterStyle,
-    this.allowStyleChange = false,
-    this.futuristicBarHeight = 64,
   });
 
   @override
-  State<LivenessDetectionScreen> createState() => _LivenessDetectionScreenState();
+  State<LivenessDetectionScreen> createState() =>
+      _LivenessDetectionScreenState();
 }
 
 class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late LivenessController _controller;
   XFile? _finalImage;
-
   late double _zoomFactor;
 
   void _resetZoomFactor() {
@@ -150,48 +106,39 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
 
   void _syncZoomFactor() {
     final z = _controller.zoomFactor;
-    if (z != _zoomFactor) {
-      setState(() {
-        _zoomFactor = z;
-      });
-    }
+    if (z != _zoomFactor) setState(() => _zoomFactor = z);
   }
+
+  LivenessController _buildController() => LivenessController(
+        cameras: widget.cameras,
+        vsync: this,
+        config: widget.config,
+        theme: widget.theme,
+        onChallengeCompleted: widget.onChallengeCompleted,
+        onLivenessCompleted: widget.onLivenessCompleted != null
+            ? (id, ok, data) => widget.onLivenessCompleted!(id, ok, data!)
+            : null,
+        onFinalImageCaptured: _handleFinalImageCaptured,
+        captureFinalImage: widget.captureFinalImage,
+        onFaceDetected: widget.onFaceDetected,
+        onFaceNotDetected: widget.onFaceNotDetected,
+        onFaceQualityCheck: widget.onFaceQualityCheck,
+        onBiometricTemplateGenerated: widget.onBiometricTemplateGenerated,
+        onReset: _resetZoomFactor,
+      );
 
   @override
   void initState() {
     super.initState();
-
     _resetZoomFactor();
-
-    _controller = LivenessController(
-      cameras: widget.cameras,
-      vsync: this,
-      config: widget.config,
-      theme: widget.theme,
-      onChallengeCompleted: widget.onChallengeCompleted,
-      // Make sure this is using the same type
-      onLivenessCompleted: widget.onLivenessCompleted != null ? (sessionId, isSuccessful, data) {
-        widget.onLivenessCompleted!(sessionId, isSuccessful, data!);
-      } : null,
-      onFinalImageCaptured: _handleFinalImageCaptured,
-      captureFinalImage: widget.captureFinalImage,
-      onFaceDetected: widget.onFaceDetected,
-      onFaceNotDetected: widget.onFaceNotDetected,
-      onFaceQualityCheck: widget.onFaceQualityCheck,
-      onBiometricTemplateGenerated: widget.onBiometricTemplateGenerated,
-      onReset: _resetZoomFactor,
-    );
+    _controller = _buildController();
     WidgetsBinding.instance.addObserver(this);
   }
 
-  void _handleFinalImageCaptured(String sessionId, XFile imageFile, Map<String, dynamic> metadata) {
-    setState(() {
-      _finalImage = imageFile;
-    });
-
-    if (widget.onFinalImageCaptured != null) {
-      widget.onFinalImageCaptured!(sessionId, imageFile, metadata);
-    }
+  void _handleFinalImageCaptured(
+      String sessionId, XFile imageFile, Map<String, dynamic> metadata) {
+    setState(() => _finalImage = imageFile);
+    widget.onFinalImageCaptured?.call(sessionId, imageFile, metadata);
   }
 
   @override
@@ -203,34 +150,21 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Handle app lifecycle changes
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _controller.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      _controller = LivenessController(
-        cameras: widget.cameras,
-        vsync: this,
-        config: widget.config,
-        theme: widget.theme,
-        onChallengeCompleted: widget.onChallengeCompleted,
-        // Make sure this is using the same type
-        onLivenessCompleted: widget.onLivenessCompleted != null
-            ? (sessionId, isSuccessful, data) {
-                widget.onLivenessCompleted!(sessionId, isSuccessful, data!);
-              }
-            : null,
-        onFinalImageCaptured: _handleFinalImageCaptured,
-        captureFinalImage: widget.captureFinalImage,
-        onFaceQualityCheck: widget.onFaceQualityCheck,
-        onBiometricTemplateGenerated: widget.onBiometricTemplateGenerated,
-        onReset: _resetZoomFactor,
-      );
+      _controller = _buildController();
       _controller.addListener(_syncZoomFactor);
-      setState(() {
-        _finalImage = null;
-      });
+      setState(() => _finalImage = null);
+    }
+  }
+
+  Future<void> _handleManualCapture(String sessionId) async {
+    final imageFile = await _controller.captureImage();
+    if (imageFile != null) {
+      widget.onManualImageCaptured?.call(sessionId, imageFile);
     }
   }
 
@@ -239,8 +173,6 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
     return ChangeNotifierProvider.value(
       value: _controller,
       child: Builder(builder: (context) {
-        // If we have a final image and custom success overlay isn't provided,
-        // use our own success overlay with the captured image
         Widget? successOverlay = widget.customSuccessOverlay;
         if (successOverlay == null &&
             _finalImage != null &&
@@ -254,7 +186,8 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
         return Stack(
           children: [
             LivenessDetectionView(
-              initializingMessage: widget.config?.messages.initializingCamera,
+              initializingMessage:
+                  widget.config?.messages.initializingCamera,
               showAppBar: widget.showAppBar,
               customAppBar: widget.customAppBar,
               customSuccessOverlay: successOverlay,
@@ -263,14 +196,12 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
               onImageCaptured: _handleManualCapture,
               captureButtonText: widget.captureButtonText,
               useColorProgress: widget.useColorProgress,
-              painterStyle: widget.painterStyle,
-              allowStyleChange: widget.allowStyleChange,
-              futuristicBarHeight: widget.futuristicBarHeight,
             ),
             if (flashColor != null)
               Positioned.fill(
                 child: IgnorePointer(
-                  child: ColoredBox(color: flashColor.withValues(alpha: 0.85)),
+                  child:
+                      ColoredBox(color: flashColor.withValues(alpha: 0.85)),
                 ),
               ),
           ],
@@ -279,17 +210,9 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
     );
   }
 
-  void _handleManualCapture(String sessionId) async {
-    final imageFile = await _controller.captureImage();
-    if (imageFile != null && widget.onManualImageCaptured != null) {
-      widget.onManualImageCaptured!(sessionId, imageFile);
-    }
-  }
-
   Widget _buildSuccessWithImage(BuildContext context) {
     final controller = Provider.of<LivenessController>(context);
     final theme = controller.theme;
-
     if (_finalImage == null) return const SizedBox.shrink();
 
     return Stack(
@@ -311,22 +234,18 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
           child: Column(
             children: [
               const Text(
-                "Verification Image Captured",
+                'Verification Image Captured',
                 style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
                   decoration: BoxDecoration(
-                    border: Border.all(
-                      color: theme.successColor,
-                      width: 2,
-                    ),
+                    border: Border.all(color: theme.successColor, width: 2),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Image.file(
@@ -345,46 +264,21 @@ class _LivenessDetectionScreenState extends State<LivenessDetectionScreen>
   }
 }
 
-/// View component of the liveness detection screen
-class LivenessDetectionView extends StatefulWidget {
-  /// Whether to show app bar
+// ---------------------------------------------------------------------------
+// View widget
+// ---------------------------------------------------------------------------
+
+class LivenessDetectionView extends StatelessWidget {
   final bool showAppBar;
-
-  /// Custom app bar
   final PreferredSizeWidget? customAppBar;
-
-  /// Custom success overlay
   final Widget? customSuccessOverlay;
-
-  /// Whether to show status indicators
   final bool showStatusIndicators;
-
-  /// Whether to show the capture image button
   final bool showCaptureImageButton;
-
-  /// Callback when image is captured
   final Function(String sessionId)? onImageCaptured;
-
-  /// Text for the capture button
   final String? captureButtonText;
-
-  /// Whether to use color progress for oval
   final bool useColorProgress;
-
   final String? initializingMessage;
 
-  /// Optional futuristic painter style. When set, the default progress bar is
-  /// replaced by an animated [FuturisticLivenessBar].
-  final LivenessUiStyle? painterStyle;
-
-  /// When `true`, a floating palette button lets the user switch styles at
-  /// runtime via [LivenessStylePicker]. Has no effect when [painterStyle] is `null`.
-  final bool allowStyleChange;
-
-  /// Height of the futuristic bar in logical pixels (default 64).
-  final double futuristicBarHeight;
-
-  /// Constructor
   const LivenessDetectionView({
     super.key,
     this.showAppBar = true,
@@ -396,41 +290,13 @@ class LivenessDetectionView extends StatefulWidget {
     this.captureButtonText,
     this.useColorProgress = true,
     this.initializingMessage = 'Initializing camera...',
-    this.painterStyle,
-    this.allowStyleChange = false,
-    this.futuristicBarHeight = 64,
   });
-
-  @override
-  State<LivenessDetectionView> createState() => _LivenessDetectionViewState();
-}
-
-class _LivenessDetectionViewState extends State<LivenessDetectionView> {
-  LivenessUiStyle? _currentStyle;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentStyle = widget.painterStyle;
-  }
-
-  Future<void> _pickStyle(BuildContext context) async {
-    final chosen = await LivenessStylePicker.show(
-      context,
-      _currentStyle ?? LivenessUiStyle.quantum,
-    );
-    if (chosen != null && mounted) {
-      setState(() => _currentStyle = chosen);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final controller = Provider.of<LivenessController>(context);
-    final mediaQuery = MediaQuery.of(context);
     final theme = controller.theme;
 
-    // Show loading screen until initialized
     if (!controller.isInitialized) {
       return Scaffold(
         body: Center(
@@ -438,15 +304,12 @@ class _LivenessDetectionViewState extends State<LivenessDetectionView> {
             mainAxisSize: MainAxisSize.min,
             children: [
               CircularProgressIndicator.adaptive(
-                backgroundColor: theme.primaryColor,
-              ),
+                  backgroundColor: theme.primaryColor),
               const SizedBox(height: 20),
               Text(
-                widget.initializingMessage!,
+                initializingMessage!,
                 style: TextStyle(
-                  fontSize: 16,
-                  color: theme.statusTextStyle.color,
-                ),
+                    fontSize: 16, color: theme.statusTextStyle.color),
               ),
             ],
           ),
@@ -454,9 +317,8 @@ class _LivenessDetectionViewState extends State<LivenessDetectionView> {
       );
     }
 
-    // Build app bar if enabled
-    final appBar = widget.showAppBar
-        ? widget.customAppBar ??
+    final appBar = showAppBar
+        ? customAppBar ??
             AppBar(
               title: const Text('Face Liveness Detection'),
               backgroundColor: theme.appBarBackgroundColor,
@@ -471,194 +333,161 @@ class _LivenessDetectionViewState extends State<LivenessDetectionView> {
             )
         : null;
 
-    // When a futuristic style is active, tint the whole screen with its
-    // background colour so the themed UI spans the entire display.
-    final scaffoldBg = _currentStyle != null
-        ? _currentStyle!.theme.backgroundColor
-        : theme.backgroundColor;
-
     return Scaffold(
-      backgroundColor: scaffoldBg,
-      extendBodyBehindAppBar: true,
+      backgroundColor: theme.backgroundColor,
       appBar: appBar,
       body: SafeArea(
-        top: false,
-        child: OrientationBuilder(
-          builder: (context, orientation) {
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                // Camera preview
-                _buildCameraPreview(controller),
-
-                // Oval overlay — futuristic HUD when a style is active,
-                // standard colour-progress overlay otherwise.
-                if (_currentStyle != null)
-                  FuturisticOvalOverlay(
-                    isFaceDetected: controller.isFaceDetected,
-                    config: controller.config,
-                    theme: controller.theme,
-                    progress: widget.useColorProgress ? controller.progress : 0.0,
-                    style: _currentStyle!,
-                    zoomFactor: controller.zoomFactor,
-                  )
-                else
-                  OvalColorProgressOverlay(
-                    zoomFactor: controller.zoomFactor,
-                    isFaceDetected: controller.isFaceDetected,
-                    config: controller.config,
-                    theme: controller.theme,
-                    progress: widget.useColorProgress ? controller.progress : 0.0,
-                    startColor: theme.primaryColor,
-                    endColor: theme.successColor,
+        child: Stack(
+          children: [
+            _LivenessBody(
+              controller: controller,
+              theme: theme,
+              showStatusIndicators: showStatusIndicators,
+              useColorProgress: useColorProgress,
+              showAppBar: showAppBar,
+            ),
+            if (controller.currentState == LivenessState.completed)
+              customSuccessOverlay ??
+                  SuccessOverlay(
+                    sessionId: controller.sessionId,
+                    onReset: controller.resetSession,
+                    theme: theme,
+                    isSuccessful: controller.isVerificationSuccessful,
+                    showCaptureImageButton: showCaptureImageButton,
+                    captureButtonText: captureButtonText,
+                    onCaptureImage: showCaptureImageButton
+                        ? (id) async => onImageCaptured?.call(id)
+                        : null,
                   ),
-
-                // Status indicators
-                if (widget.showStatusIndicators) ...[
-                  Positioned(
-                    top: widget.showAppBar ? 130 : 40,
-                    right: 20,
-                    child: StatusIndicator.faceDetection(
-                      isActive: controller.isFaceDetected,
-                      theme: theme,
-                    ),
-                  ),
-                  Positioned(
-                    top: widget.showAppBar ? 130 : 40,
-                    left: 20,
-                    child: StatusIndicator.lighting(
-                      isActive: controller.isLightingGood,
-                      theme: theme,
-                    ),
-                  ),
-                ],
-
-                // Status message
-                Positioned(
-                  top: (widget.showAppBar ? kToolbarHeight : 0) +
-                      mediaQuery.padding.top +
-                      20,
-                  left: 20,
-                  right: 20,
-                  child: Center(
-                    child: AnimatedStatusMessage(
-                      message: controller.statusMessage,
-                      theme: theme,
-                    ),
-                  ),
-                ),
-
-                // Face centering message
-                if (controller.currentState == LivenessState.centeringFace)
-                  Positioned(
-                    bottom: 100 + mediaQuery.padding.bottom,
-                    left: 20,
-                    right: 20,
-                    child: Center(
-                      child: Text(
-                        controller.faceCenteringMessage,
-                        style: theme.guidanceTextStyle,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-
-                // Challenge hint widget
-                if (controller.currentState == LivenessState.performingChallenges &&
-                    controller.session.currentChallenge != null)
-                  _buildChallengeHint(
-                    controller,
-                    mediaQuery,
-                    widget.showAppBar,
-                  ),
-
-                // ── Progress bar (default / legacy) ───────────────────────
-                if (_currentStyle == null && !widget.useColorProgress)
-                  Positioned(
-                    bottom: 40 + mediaQuery.padding.bottom,
-                    left: 20,
-                    right: 20,
-                    child: LivenessProgressBar(
-                      progress: controller.progress,
-                    ),
-                  ),
-
-
-                // ── Style-picker floating button ──────────────────────────
-                if (_currentStyle != null && widget.allowStyleChange)
-                  Positioned(
-                    bottom: 20 + mediaQuery.padding.bottom,
-                    right: 20,
-                    child: GestureDetector(
-                      onTap: () => _pickStyle(context),
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: _currentStyle!.theme.accentColor
-                              .withValues(alpha: 0.15),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: _currentStyle!.theme.accentColor,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: Icon(
-                          Icons.palette_outlined,
-                          color: _currentStyle!.theme.accentColor,
-                          size: 20,
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // Success overlay
-                if (controller.currentState == LivenessState.completed)
-                  widget.customSuccessOverlay ??
-                      SuccessOverlay(
-                        sessionId: controller.sessionId,
-                        onReset: controller.resetSession,
-                        theme: theme,
-                        isSuccessful: controller.isVerificationSuccessful,
-                        showCaptureImageButton: widget.showCaptureImageButton,
-                        captureButtonText: widget.captureButtonText,
-                        onCaptureImage: widget.showCaptureImageButton
-                            ? (sessionId) async {
-                                widget.onImageCaptured?.call(sessionId);
-                              }
-                            : null,
-                      ),
-              ],
-            );
-          },
+          ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildCameraPreview(LivenessController controller) {
-    if (controller.isInitialized && controller.cameraController != null) {
-      return FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: controller.cameraController!.value.previewSize!.height,
-          height: controller.cameraController!.value.previewSize!.width,
-          child: CameraPreview(controller.cameraController!),
+// ---------------------------------------------------------------------------
+// Body: column layout (camera circle + text below)
+// ---------------------------------------------------------------------------
+
+class _LivenessBody extends StatelessWidget {
+  final LivenessController controller;
+  final LivenessTheme theme;
+  final bool showStatusIndicators;
+  final bool useColorProgress;
+  final bool showAppBar;
+
+  const _LivenessBody({
+    required this.controller,
+    required this.theme,
+    required this.showStatusIndicators,
+    required this.useColorProgress,
+    required this.showAppBar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final screenWidth = mediaQuery.size.width;
+
+    // Camera circle diameter: full screen width so it fills horizontally
+    final circleDiameter = screenWidth;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // ── Circular camera preview ─────────────────────────────────────────
+        SizedBox(
+          width: circleDiameter,
+          height: circleDiameter,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Camera feed clipped to a circle
+              ClipOval(
+                child: _CameraPreview(controller: controller),
+              ),
+
+              // Oval border overlay drawn on top of camera — no dark fill
+              CustomPaint(
+                painter: _CircleBorderPainter(
+                  isFaceDetected: controller.isFaceDetected,
+                  progress: useColorProgress ? controller.progress : 0.0,
+                  config: controller.config,
+                  theme: theme,
+                  zoomFactor: controller.zoomFactor,
+                ),
+              ),
+
+              // Status pills inside the camera circle
+              if (showStatusIndicators) ...[
+                Positioned(
+                  top: 20,
+                  left: 20,
+                  child: StatusIndicator.lighting(
+                    isActive: controller.isLightingGood,
+                    theme: theme,
+                  ),
+                ),
+                Positioned(
+                  top: 20,
+                  right: 20,
+                  child: StatusIndicator.faceDetection(
+                    isActive: controller.isFaceDetected,
+                    theme: theme,
+                  ),
+                ),
+              ],
+
+              // Challenge hints inside the camera area
+              if (controller.currentState ==
+                      LivenessState.performingChallenges &&
+                  controller.session.currentChallenge != null)
+                _buildChallengeHint(context, controller, mediaQuery),
+            ],
+          ),
         ),
-      );
-    } else {
-      return const Center(child: CircularProgressIndicator.adaptive());
-    }
+
+        // ── Instruction / status message below camera ───────────────────────
+        const SizedBox(height: 20),
+
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: AnimatedStatusMessage(
+            message: controller.statusMessage,
+            theme: theme,
+          ),
+        ),
+
+        // Face centering guidance
+        if (controller.currentState == LivenessState.centeringFace) ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              controller.faceCenteringMessage,
+              style: theme.guidanceTextStyle,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+
+        // Progress bar (only when color-progress is disabled)
+        if (!useColorProgress) ...[
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: LivenessProgressBar(progress: controller.progress),
+          ),
+        ],
+      ],
+    );
   }
 
-  Widget _buildChallengeHint(
-    LivenessController controller,
-    MediaQueryData mediaQuery,
-    bool showAppBar,
-  ) {
+  Widget _buildChallengeHint(BuildContext context, LivenessController controller,
+      MediaQueryData mediaQuery) {
     final config = controller.config;
     final currentChallenge = controller.session.currentChallenge!;
-
     final hintConfig = config.challengeHints?[currentChallenge.type] ??
         config.defaultChallengeHintConfig;
 
@@ -666,16 +495,114 @@ class _LivenessDetectionViewState extends State<LivenessDetectionView> {
       return const SizedBox.shrink();
     }
 
-    final hintWidget = ChallengeHintWidget(
-      challengeType: currentChallenge.type,
-      config: hintConfig,
-      key: ValueKey('hint_${currentChallenge.type}'),
-    );
-
     return hintConfig.position.positionWidget(
-      hintWidget,
+      ChallengeHintWidget(
+        challengeType: currentChallenge.type,
+        config: hintConfig,
+        key: ValueKey('hint_${currentChallenge.type}'),
+      ),
       mediaQuery,
       showAppBar: showAppBar,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Camera preview (fills its parent via FittedBox.cover)
+// ---------------------------------------------------------------------------
+
+class _CameraPreview extends StatelessWidget {
+  final LivenessController controller;
+  const _CameraPreview({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    if (controller.isInitialized && controller.cameraController != null) {
+      final preview = controller.cameraController!.value.previewSize;
+      return FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          // previewSize is rotated: height = native width, width = native height
+          width: preview!.height,
+          height: preview.width,
+          child: CameraPreview(controller.cameraController!),
+        ),
+      );
+    }
+    return const Center(child: CircularProgressIndicator.adaptive());
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Painter: draws only the oval/circle border + progress arc, no dark fill
+// ---------------------------------------------------------------------------
+
+class _CircleBorderPainter extends CustomPainter {
+  final bool isFaceDetected;
+  final double progress;
+  final LivenessConfig config;
+  final LivenessTheme theme;
+  final double zoomFactor;
+
+  const _CircleBorderPainter({
+    required this.isFaceDetected,
+    required this.progress,
+    required this.config,
+    required this.theme,
+    required this.zoomFactor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+
+    // Scale the oval the same way OvalColorProgressPainter does
+    final ovalHeight = size.height * config.ovalHeightRatio;
+    final ovalWidth = ovalHeight * config.ovalWidthRatio;
+    const double initialScale = 0.7;
+    final double scale =
+        initialScale + (1.0 - initialScale) * zoomFactor;
+
+    final ovalRect = Rect.fromCenter(
+      center: center,
+      width: ovalWidth * scale,
+      height: ovalHeight * scale,
+    );
+
+    // Choose border color
+    final Color borderColor = isFaceDetected
+        ? Color.lerp(theme.primaryColor, theme.successColor, progress) ??
+            theme.primaryColor
+        : theme.ovalGuideColor;
+
+    // Draw oval border only (no fill / no dark overlay)
+    canvas.drawOval(
+      ovalRect,
+      Paint()
+        ..color = borderColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = config.strokeWidth,
+    );
+
+    // Draw progress arc outside the oval
+    if (progress > 0 && isFaceDetected) {
+      canvas.drawArc(
+        ovalRect.inflate(5.0),
+        -math.pi / 2,
+        progress * math.pi * 2,
+        false,
+        Paint()
+          ..color = theme.successColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = config.strokeWidth / 2
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CircleBorderPainter old) =>
+      old.isFaceDetected != isFaceDetected ||
+      old.progress != progress ||
+      old.zoomFactor != zoomFactor;
 }
